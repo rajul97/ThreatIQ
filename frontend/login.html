@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ThreatIQ — Login</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg:            #f0f4f8;
+      --bg-card:       #ffffff;
+      --bg-input:      #f7f9fc;
+      --bg-input-focus:#ffffff;
+      --border:        #dce4ed;
+      --border-focus:  #1a56db;
+      --accent:        #1a56db;
+      --accent-light:  #eef2ff;
+      --accent-hover:  #1648c0;
+      --text-primary:  #0f1f2e;
+      --text-secondary:#4a6280;
+      --text-muted:    #8fa5be;
+      --error:         #d92d3e;
+      --error-bg:      #fff1f2;
+      --error-border:  #fecdd3;
+      --success:       #047857;
+      --success-bg:    #f0fdf4;
+      --success-border:#bbf7d0;
+      --shadow-sm:     0 1px 3px rgba(15,31,46,0.08), 0 1px 2px rgba(15,31,46,0.04);
+      --shadow-md:     0 4px 16px rgba(15,31,46,0.10), 0 2px 6px rgba(15,31,46,0.06);
+      --shadow-lg:     0 10px 40px rgba(15,31,46,0.12), 0 4px 12px rgba(15,31,46,0.07);
+      --radius:        12px;
+      --font:          'Segoe UI', system-ui, -apple-system, sans-serif;
+      --font-mono:     'Consolas', 'Courier New', monospace;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: var(--font);
+      background-color: var(--bg);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    /* Subtle dot pattern background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(circle, #c8d6e5 1px, transparent 1px);
+      background-size: 28px 28px;
+      opacity: 0.45;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Top blue accent bar */
+    body::after {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #1a56db, #3b82f6, #1a56db);
+      z-index: 10;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .logo-wrap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 60px;
+      height: 60px;
+      background: var(--accent);
+      border-radius: 14px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 14px rgba(26, 86, 219, 0.35);
+    }
+
+    .logo-icon {
+      width: 30px;
+      height: 30px;
+      stroke: #ffffff;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .brand-name {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+    }
+
+    .brand-name span {
+      color: var(--accent);
+    }
+
+    .brand-tagline {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 5px;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px 32px 32px;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .card-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    /* ── Status ── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 13px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #047857;
+      margin-bottom: 24px;
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #22c55e;
+      flex-shrink: 0;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+      50%       { opacity: 0.7; box-shadow: 0 0 0 4px rgba(34,197,94,0); }
+    }
+
+    /* ── Alert messages ── */
+    .alert {
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+      border-radius: 8px;
+      padding: 11px 14px;
+      margin-bottom: 18px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .alert.visible { display: flex; }
+
+    .alert-error {
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      color: var(--error);
+    }
+
+    .alert-success {
+      background: var(--success-bg);
+      border: 1px solid var(--success-border);
+      color: var(--success);
+    }
+
+    .alert svg {
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      margin-top: 1px;
+    }
+
+    /* ── Form groups ── */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 7px;
+    }
+
+    .input-wrap {
+      position: relative;
+    }
+
+    .input-icon {
+      position: absolute;
+      left: 13px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      stroke: var(--text-muted);
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+      transition: stroke 0.2s;
+    }
+
+    input {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1.5px solid var(--border);
+      border-radius: 9px;
+      padding: 11px 13px 11px 40px;
+      font-size: 14px;
+      font-family: var(--font);
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+    }
+
+    input::placeholder {
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    input:focus {
+      border-color: var(--border-focus);
+      background: var(--bg-input-focus);
+      box-shadow: 0 0 0 3px rgba(26, 86, 219, 0.12);
+    }
+
+    .input-wrap:focus-within .input-icon {
+      stroke: var(--accent);
+    }
+
+    .pwd-toggle {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 3px;
+      display: flex;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .pwd-toggle:hover { color: var(--accent); }
+
+    .pwd-toggle svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* ── Submit button ── */
+    .btn-submit {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      border: none;
+      border-radius: 9px;
+      font-size: 14px;
+      font-weight: 700;
+      font-family: var(--font);
+      letter-spacing: 0.5px;
+      color: #ffffff;
+      cursor: pointer;
+      transition: background 0.2s, box-shadow 0.2s, transform 0.12s;
+      margin-top: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-submit:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 4px 14px rgba(26, 86, 219, 0.35);
+    }
+
+    .btn-submit:active { transform: scale(0.99); }
+
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .btn-text { transition: opacity 0.2s; }
+
+    .btn-loader {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-submit.loading .btn-text { opacity: 0; }
+    .btn-submit.loading .btn-loader { display: flex; }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2.5px solid rgba(255,255,255,0.35);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Divider ── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Register link ── */
+    .register-wrap {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .register-wrap a {
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+      margin-left: 3px;
+    }
+
+    .register-wrap a:hover { text-decoration: underline; }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 31, 46, 0.5);
+      backdrop-filter: blur(3px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-overlay.visible { display: flex; }
+
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+    }
+
+    .modal-title {
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .modal-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 22px;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 16px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .modal-close:hover {
+      background: var(--border);
+      color: var(--text-primary);
+    }
+
+    /* ── Security badges ── */
+    .security-badges {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .badge svg {
+      width: 12px;
+      height: 12px;
+      stroke: var(--accent);
+      fill: none;
+      stroke-width: 2;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="page">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="logo-wrap">
+        <svg class="logo-icon" viewBox="0 0 30 30">
+          <path d="M15 2 L27 7 L27 15 C27 21.5 22 26.5 15 28.5 C8 26.5 3 21.5 3 15 L3 7 Z"/>
+          <circle cx="15" cy="14" r="4"/>
+          <line x1="15" y1="7"  x2="15" y2="10"/>
+          <line x1="15" y1="18" x2="15" y2="21"/>
+          <line x1="8"  y1="14" x2="11" y2="14"/>
+          <line x1="19" y1="14" x2="22" y2="14"/>
+        </svg>
+      </div>
+      <div class="brand-name">THREAT<span>IQ</span></div>
+      <div class="brand-tagline">AI-Powered Threat Intelligence Platform</div>
+    </div>
+
+    <!-- Card -->
+    <div class="card">
+
+      <!-- System status -->
+      <div class="status-bar">
+        <div class="status-dot"></div>
+        All systems operational &nbsp;&middot;&nbsp; API v1.0.0
+      </div>
+
+      <div class="card-title">Welcome back</div>
+      <div class="card-subtitle">Sign in to access your threat intelligence dashboard</div>
+
+      <!-- Login error -->
+      <div class="alert alert-error" id="loginError">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="loginErrorText">Invalid username or password.</span>
+      </div>
+
+      <!-- Login form -->
+      <form id="loginForm" autocomplete="off" novalidate>
+
+        <div class="form-group">
+          <label for="username">Username</label>
+          <div class="input-wrap">
+            <input
+              type="text"
+              id="username"
+              placeholder="Enter your username"
+              autocomplete="username"
+              spellcheck="false"
+            />
+            <svg class="input-icon" viewBox="0 0 24 24">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <div class="input-wrap">
+            <input
+              type="password"
+              id="password"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+            />
+            <svg class="input-icon" viewBox="0 0 24 24">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <button type="button" class="pwd-toggle" id="pwdToggle" tabindex="-1">
+              <svg id="eyeIcon" viewBox="0 0 24 24">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-submit" id="loginBtn">
+          <span class="btn-text">Sign In</span>
+          <span class="btn-loader"><div class="spinner"></div></span>
+        </button>
+
+      </form>
+
+      <div class="divider">or</div>
+
+      <div class="register-wrap">
+        Don't have an account?
+        <a href="#" id="openRegister">Create one</a>
+      </div>
+
+    </div>
+
+    <!-- Security badges -->
+    <div class="security-badges">
+      <div class="badge">
+        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        JWT Secured
+      </div>
+      <div class="badge">
+        <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        bcrypt Hashed
+      </div>
+      <div class="badge">
+        <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        MITRE ATT&amp;CK
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      ThreatIQ &copy; 2025 &nbsp;&middot;&nbsp; Powered by Claude AI (Anthropic)
+    </div>
+
+  </div>
+
+
+  <!-- Register Modal -->
+  <div class="modal-overlay" id="registerModal">
+    <div class="modal">
+      <button class="modal-close" id="closeRegister">&times;</button>
+      <div class="modal-title">Create Account</div>
+      <div class="modal-subtitle">Register to access ThreatIQ</div>
+
+      <div class="alert alert-success" id="registerSuccess">
+        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        <span>Account created. You can now sign in.</span>
+      </div>
+
+      <div class="alert alert-error" id="registerError">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="registerErrorText">Registration failed.</span>
+      </div>
+
+      <form id="registerForm" autocomplete="off" novalidate>
+
+        <div class="form-group">
+          <label for="regUsername">Username</label>
+          <div class="input-wrap">
+            <input type="text" id="regUsername" placeholder="Choose a username" spellcheck="false"/>
+            <svg class="input-icon" viewBox="0 0 24 24">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="regEmail">Email</label>
+          <div class="input-wrap">
+            <input type="email" id="regEmail" placeholder="your@email.com"/>
+            <svg class="input-icon" viewBox="0 0 24 24">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="regPassword">Password</label>
+          <div class="input-wrap">
+            <input type="password" id="regPassword" placeholder="Minimum 8 characters"/>
+            <svg class="input-icon" viewBox="0 0 24 24">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-submit" id="registerBtn">
+          <span class="btn-text">Create Account</span>
+          <span class="btn-loader"><div class="spinner"></div></span>
+        </button>
+
+      </form>
+    </div>
+  </div>
+
+
+  <script>
+    const API = 'http://localhost:5000/api';
+
+    // ── Password visibility toggle ───────────────────
+    const pwdInput  = document.getElementById('password');
+    const pwdToggle = document.getElementById('pwdToggle');
+    const eyeIcon   = document.getElementById('eyeIcon');
+
+    const EYE_OPEN  = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
+    const EYE_CLOSE = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`;
+
+    pwdToggle.addEventListener('click', () => {
+      const show = pwdInput.type === 'password';
+      pwdInput.type = show ? 'text' : 'password';
+      eyeIcon.innerHTML = show ? EYE_CLOSE : EYE_OPEN;
+    });
+
+    // ── Login ────────────────────────────────────────
+    const loginForm  = document.getElementById('loginForm');
+    const loginBtn   = document.getElementById('loginBtn');
+    const loginError = document.getElementById('loginError');
+    const loginErrTx = document.getElementById('loginErrorText');
+
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      loginError.classList.remove('visible');
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!username || !password) {
+        loginErrTx.textContent = 'Please enter your username and password.';
+        loginError.classList.add('visible');
+        return;
+      }
+
+      loginBtn.classList.add('loading');
+      loginBtn.disabled = true;
+
+      try {
+        const res  = await fetch(`${API}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.access_token) {
+          localStorage.setItem('threatiq_token', data.access_token);
+          localStorage.setItem('threatiq_user', username);
+          window.location.href = 'index.html';
+        } else {
+          loginErrTx.textContent = data.error || 'Invalid username or password.';
+          loginError.classList.add('visible');
+        }
+      } catch {
+        loginErrTx.textContent = 'Cannot connect to server. Ensure the backend is running on port 5000.';
+        loginError.classList.add('visible');
+      } finally {
+        loginBtn.classList.remove('loading');
+        loginBtn.disabled = false;
+      }
+    });
+
+    // ── Register modal ───────────────────────────────
+    const modal        = document.getElementById('registerModal');
+    const openRegBtn   = document.getElementById('openRegister');
+    const closeRegBtn  = document.getElementById('closeRegister');
+    const registerForm = document.getElementById('registerForm');
+    const registerBtn  = document.getElementById('registerBtn');
+    const regError     = document.getElementById('registerError');
+    const regErrTx     = document.getElementById('registerErrorText');
+    const regSuccess   = document.getElementById('registerSuccess');
+
+    openRegBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      registerForm.reset();
+      regError.classList.remove('visible');
+      regSuccess.classList.remove('visible');
+      modal.classList.add('visible');
+    });
+
+    const closeModal = () => modal.classList.remove('visible');
+    closeRegBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+    registerForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      regError.classList.remove('visible');
+      regSuccess.classList.remove('visible');
+
+      const username = document.getElementById('regUsername').value.trim();
+      const email    = document.getElementById('regEmail').value.trim();
+      const password = document.getElementById('regPassword').value;
+
+      if (!username || !email || !password) {
+        regErrTx.textContent = 'All fields are required.';
+        regError.classList.add('visible');
+        return;
+      }
+
+      if (password.length < 8) {
+        regErrTx.textContent = 'Password must be at least 8 characters.';
+        regError.classList.add('visible');
+        return;
+      }
+
+      registerBtn.classList.add('loading');
+      registerBtn.disabled = true;
+
+      try {
+        const res  = await fetch(`${API}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, email, password })
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          regSuccess.classList.add('visible');
+          registerForm.reset();
+          setTimeout(closeModal, 2200);
+        } else {
+          regErrTx.textContent = data.error || 'Registration failed. Please try again.';
+          regError.classList.add('visible');
+        }
+      } catch {
+        regErrTx.textContent = 'Cannot connect to server.';
+        regError.classList.add('visible');
+      } finally {
+        registerBtn.classList.remove('loading');
+        registerBtn.disabled = false;
+      }
+    });
+
+    // ── Auto-redirect if already logged in ──────────
+    if (localStorage.getItem('threatiq_token')) {
+      window.location.href = 'index.html';
+    }
+  </script>
+
+</body>
+</html>

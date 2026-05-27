@@ -1,0 +1,990 @@
+# ThreatIQ SIGMA Templates - Network
+# Version: 2.0 | Framework: SIGMA v1.0.4
+# Compatible: Splunk, Elastic, QRadar, Microsoft Sentinel, Chronicle, Zeek/Bro, Suricata
+
+---
+# T1071.001 - Web Traffic C2
+title: Suspicious HTTP/HTTPS Beaconing Pattern
+id: n1a2b3c4-d5e6-7890-abcd-ef1234567890
+status: stable
+description: Detects regular HTTP/HTTPS beaconing intervals indicative of C2 communication
+references:
+  - https://attack.mitre.org/techniques/T1071/001/
+author: ThreatIQ
+date: 2025/01/01
+modified: 2025/01/01
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+logsource:
+  category: proxy
+detection:
+  selection:
+    c-uri-query|contains:
+      - '?id='
+      - '?uid='
+      - '?guid='
+      - '?session='
+      - '?token='
+      - '?c='
+      - '?cmd='
+      - '?key='
+  filter_legit:
+    cs-host|contains:
+      - 'microsoft.com'
+      - 'google.com'
+      - 'amazon.com'
+      - 'cloudflare.com'
+      - 'akamai.com'
+      - 'fastly.com'
+  timeframe: 3600s
+  condition: selection and not filter_legit | count() by src_ip, cs-host > 20
+falsepositives:
+  - Legitimate applications with session tokens
+  - Analytics tracking
+level: medium
+fields:
+  - src_ip
+  - dst_ip
+  - cs-host
+  - c-uri
+  - cs-user-agent
+  - sc-bytes
+
+---
+# T1071.001 - Cobalt Strike Beacon Detection
+title: Cobalt Strike Beacon C2 Traffic
+id: n2b3c4d5-e6f7-8901-bcde-f23456789012
+status: stable
+description: Detects Cobalt Strike beacon communication patterns including default profiles and malleable C2
+references:
+  - https://attack.mitre.org/techniques/T1071/001/
+  - https://github.com/Neo23x0/sigma/blob/master/rules/network/net_mal_cobaltstrike.yml
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+  - attack.t1573
+logsource:
+  category: proxy
+detection:
+  selection_default_uri:
+    c-uri|contains:
+      - '/jquery-3.3.1.min.js'
+      - '/updates.rss'
+      - '/coin.php'
+      - '/j.ad'
+      - '/load'
+      - '/push'
+      - '/____cfduid='
+  selection_ua_cs:
+    cs-user-agent|contains:
+      - 'Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0;'
+      - 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36'
+  selection_cs_headers:
+    cs-cookie|contains:
+      - '__cfduid='
+      - '__utma='
+    c-uri|contains:
+      - '/visit.js'
+      - '/g.pixel'
+      - '/activity'
+  selection_port:
+    dst_port:
+      - 50050
+      - 443
+      - 80
+      - 8080
+      - 8443
+    c-uri|contains:
+      - '/ca'
+      - '/pixel'
+      - '/submit.php'
+  condition: selection_default_uri or (selection_ua_cs and selection_cs_headers) or selection_port
+falsepositives:
+  - Legitimate jQuery CDN requests
+  - Cloud service traffic
+level: high
+
+---
+# T1071.004 - DNS Tunneling
+title: DNS Tunneling Detection
+id: n3c4d5e6-f7a8-9012-cdef-345678901234
+status: stable
+description: Detects DNS tunneling through unusually long DNS queries, high query rates, or suspicious TLD usage
+references:
+  - https://attack.mitre.org/techniques/T1071/004/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.command_and_control
+  - attack.t1071.004
+  - attack.exfiltration
+logsource:
+  category: dns
+detection:
+  selection_long_query:
+    query|re: '.{50,}\.(com|net|org|io|co)'
+  selection_high_entropy:
+    query|re: '^[a-z0-9]{30,}\.'
+  selection_suspicious_tld:
+    query|endswith:
+      - '.xyz'
+      - '.tk'
+      - '.ml'
+      - '.ga'
+      - '.cf'
+      - '.pw'
+      - '.cc'
+      - '.top'
+      - '.bit'
+      - '.onion'
+  selection_tools:
+    query|contains:
+      - 'iodine'
+      - 'dns2tcp'
+      - 'dnscat'
+      - 'dnsc2'
+  timeframe: 60s
+  condition: selection_long_query or selection_high_entropy or selection_tools or (selection_suspicious_tld | count() by src_ip > 50)
+falsepositives:
+  - CDN services with long subdomain names
+  - Some analytics and tracking domains
+level: high
+
+---
+# T1048 - Exfiltration Over Alternative Protocol
+title: Data Exfiltration via FTP/SCP/SFTP
+id: n4d5e6f7-a8b9-0123-defa-456789012345
+status: stable
+description: Detects large data transfers over file transfer protocols to external destinations
+references:
+  - https://attack.mitre.org/techniques/T1048/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.exfiltration
+  - attack.t1048
+logsource:
+  category: firewall
+detection:
+  selection_ftp:
+    dst_port:
+      - 21
+      - 20
+      - 990
+      - 989
+    direction: outbound
+  selection_sftp_scp:
+    dst_port: 22
+    direction: outbound
+    bytes_sent|gte: 10485760
+  filter_known_destinations:
+    dst_ip|startswith:
+      - '10.'
+      - '192.168.'
+      - '172.16.'
+  condition: (selection_ftp or selection_sftp_scp) and not filter_known_destinations
+falsepositives:
+  - Legitimate file transfers to cloud storage
+  - Authorized backup operations
+level: medium
+
+---
+# T1048.003 - Exfiltration Over Unencrypted Protocol
+title: Large HTTP POST - Possible Data Exfiltration
+id: n5e6f7a8-b9c0-1234-efab-567890123456
+status: stable
+description: Detects unusually large HTTP POST requests that may indicate data exfiltration
+references:
+  - https://attack.mitre.org/techniques/T1048/003/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.exfiltration
+  - attack.t1048.003
+logsource:
+  category: proxy
+detection:
+  selection:
+    cs-method: 'POST'
+    cs-bytes|gte: 5242880
+  filter_legit_upload:
+    cs-host|contains:
+      - 'sharepoint.com'
+      - 'onedrive.com'
+      - 'dropbox.com'
+      - 'box.com'
+      - 'drive.google.com'
+      - 's3.amazonaws.com'
+      - 'blob.core.windows.net'
+  condition: selection and not filter_legit_upload
+falsepositives:
+  - Legitimate large file uploads
+  - Web application data submissions
+level: medium
+
+---
+# T1110 - Brute Force / Password Spraying
+title: Password Spray Attack Detection
+id: n6f7a8b9-c0d1-2345-fabc-678901234567
+status: stable
+description: Detects password spraying attacks — many usernames tried with single password
+references:
+  - https://attack.mitre.org/techniques/T1110/003/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.credential_access
+  - attack.t1110.003
+logsource:
+  category: firewall
+detection:
+  selection:
+    dst_port:
+      - 389
+      - 636
+      - 445
+      - 88
+      - 443
+      - 80
+    action: 'allow'
+  timeframe: 300s
+  condition: selection | count(dst_user) by src_ip > 20
+falsepositives:
+  - Legitimate authentication from admin tools
+  - LDAP synchronization
+level: high
+
+---
+# T1190 - Exploit Public-Facing Application
+title: Web Application Exploitation Attempt
+id: n7a8b9c0-d1e2-3456-abcd-789012345678
+status: stable
+description: Detects common web application attack signatures including SQLi, XSS, LFI, RFI
+references:
+  - https://attack.mitre.org/techniques/T1190/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.initial_access
+  - attack.t1190
+logsource:
+  category: webserver
+detection:
+  selection_sqli:
+    request|contains:
+      - "' OR '1'='1"
+      - "' OR 1=1--"
+      - "1' ORDER BY"
+      - "UNION SELECT NULL"
+      - "UNION ALL SELECT"
+      - "' AND SLEEP("
+      - "'; EXEC xp_"
+      - "INFORMATION_SCHEMA"
+      - "sys.tables"
+      - "pg_sleep("
+      - "waitfor delay"
+  selection_lfi:
+    request|contains:
+      - '../../../etc/passwd'
+      - '../../../etc/shadow'
+      - '..%2F..%2F..%2F'
+      - '%2e%2e%2f%2e%2e%2f'
+      - '/proc/self/environ'
+      - 'php://input'
+      - 'php://filter'
+      - 'data://text/plain'
+  selection_rce:
+    request|contains:
+      - ';id;'
+      - ';id|'
+      - ';cat /etc/passwd'
+      - '|id'
+      - '|whoami'
+      - '`id`'
+      - '$(id)'
+      - ';uname -a'
+      - 'system('
+      - 'exec('
+      - 'passthru('
+      - 'shell_exec('
+  selection_xss:
+    request|contains:
+      - '<script>'
+      - '</script>'
+      - 'javascript:'
+      - 'onerror='
+      - 'onload='
+      - 'onmouseover='
+      - '<img src=x'
+      - 'alert(1)'
+      - 'alert(document.cookie)'
+  condition: selection_sqli or selection_lfi or selection_rce or selection_xss
+falsepositives:
+  - Security scanners (Burp Suite, Nikto, OWASP ZAP)
+  - Authorized penetration testing
+level: high
+
+---
+# T1133 - External Remote Services
+title: Suspicious VPN / Remote Access Connection
+id: n8b9c0d1-e2f3-4567-bcde-890123456789
+status: stable
+description: Detects connections to suspicious VPN or remote access services on non-standard ports
+references:
+  - https://attack.mitre.org/techniques/T1133/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.initial_access
+  - attack.persistence
+  - attack.t1133
+logsource:
+  category: firewall
+detection:
+  selection_ngrok:
+    dst_host|endswith:
+      - '.ngrok.io'
+      - '.ngrok-free.app'
+      - '.tunnel.app'
+  selection_suspicious_ports:
+    dst_port:
+      - 1194
+      - 1723
+      - 4500
+      - 500
+      - 1080
+      - 3128
+      - 8118
+    direction: outbound
+  selection_tor:
+    dst_port:
+      - 9001
+      - 9030
+      - 9050
+      - 9051
+      - 9150
+  selection_teamviewer_anydesk:
+    dst_port:
+      - 5938
+      - 7070
+      - 443
+    dst_host|contains:
+      - 'teamviewer.com'
+      - 'anydesk.com'
+      - 'logmein.com'
+      - 'join.me'
+      - 'screenconnect.com'
+      - 'zoho.com'
+  condition: selection_ngrok or selection_tor or selection_suspicious_ports
+falsepositives:
+  - Corporate VPN clients
+  - Legitimate remote desktop tools
+level: medium
+
+---
+# T1018 - Remote System Discovery / Network Scan
+title: Network Port Scanning Activity
+id: n9c0d1e2-f3a4-5678-cdef-901234567890
+status: stable
+description: Detects network scanning activity from internal hosts
+references:
+  - https://attack.mitre.org/techniques/T1018/
+  - https://attack.mitre.org/techniques/T1046/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.discovery
+  - attack.t1018
+  - attack.t1046
+logsource:
+  category: firewall
+detection:
+  selection:
+    action:
+      - 'deny'
+      - 'drop'
+      - 'reject'
+    direction: outbound
+  timeframe: 60s
+  condition: selection | count(dst_ip) by src_ip > 30
+falsepositives:
+  - Vulnerability scanners (Nessus, Qualys)
+  - Network inventory tools
+  - Authorized penetration testing
+level: medium
+
+---
+# T1046 - Network Service Scanning
+title: Suspicious Port Scan from Single Source
+id: n0d1e2f3-a4b5-6789-defa-012345678901
+status: stable
+description: Detects rapid connection attempts to multiple ports from single source (port scanning)
+references:
+  - https://attack.mitre.org/techniques/T1046/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.discovery
+  - attack.t1046
+logsource:
+  category: firewall
+detection:
+  selection:
+    action:
+      - 'deny'
+      - 'drop'
+    src_ip|startswith:
+      - '10.'
+      - '192.168.'
+      - '172.'
+  timeframe: 30s
+  condition: selection | count(dst_port) by src_ip, dst_ip > 20
+falsepositives:
+  - Authorized vulnerability assessments
+  - Application connectivity testing
+level: medium
+
+---
+# T1041 - Exfiltration Over C2 Channel
+title: Unusually Large Outbound Transfer to Single Destination
+id: na1e2f3a4-b5c6-7890-efab-123456789012
+status: stable
+description: Detects abnormally large data transfers to a single external destination
+references:
+  - https://attack.mitre.org/techniques/T1041/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.exfiltration
+  - attack.t1041
+logsource:
+  category: firewall
+detection:
+  selection:
+    direction: outbound
+    bytes_sent|gte: 104857600
+  filter_cloud:
+    dst_ip|contains:
+      - 'amazonaws.com'
+      - 'azure.com'
+      - 'googleusercontent.com'
+      - 'akamaihd.net'
+  filter_private:
+    dst_ip|startswith:
+      - '10.'
+      - '192.168.'
+      - '172.16.'
+  condition: selection and not filter_cloud and not filter_private
+falsepositives:
+  - Legitimate large file transfers
+  - Software update downloads
+  - Backup operations
+level: medium
+
+---
+# T1557 - Man-in-the-Middle / ARP Spoofing
+title: ARP Spoofing / Cache Poisoning Detection
+id: nb2f3a4b-c6d7-8901-fabc-234567890123
+status: stable
+description: Detects potential ARP spoofing attacks indicating MITM attempts
+references:
+  - https://attack.mitre.org/techniques/T1557/002/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.credential_access
+  - attack.collection
+  - attack.t1557.002
+logsource:
+  category: network
+  product: zeek
+detection:
+  selection:
+    event_type: 'arp'
+    is_orig: 'true'
+  timeframe: 60s
+  condition: selection | count() by src_mac, src_ip > 50
+falsepositives:
+  - DHCP lease renewals
+  - Network changes
+  - ARP scanning tools
+level: high
+
+---
+# T1499 - Endpoint Denial of Service
+title: Inbound DDoS / Flood Attack Detection
+id: nc3a4b5c-d7e8-9012-abcd-345678901234
+status: stable
+description: Detects inbound flood attacks that could indicate DDoS activity
+references:
+  - https://attack.mitre.org/techniques/T1499/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.impact
+  - attack.t1499
+logsource:
+  category: firewall
+detection:
+  selection_syn_flood:
+    flags: 'S'
+    direction: inbound
+  selection_udp_flood:
+    proto: 'udp'
+    direction: inbound
+  timeframe: 10s
+  condition: (selection_syn_flood | count() by dst_ip > 10000) or (selection_udp_flood | count() by dst_ip > 5000)
+falsepositives:
+  - High-traffic legitimate services
+  - Load testing
+level: high
+
+---
+# T1573 - Encrypted Channel / Non-Standard SSL
+title: Suspicious SSL/TLS Certificate or Non-Standard Port
+id: nd4b5c6d-e8f9-0123-bcde-456789012345
+status: stable
+description: Detects SSL/TLS connections with suspicious certificate properties or on non-standard ports
+references:
+  - https://attack.mitre.org/techniques/T1573/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.command_and_control
+  - attack.t1573
+logsource:
+  category: network
+  product: zeek
+detection:
+  selection_self_signed:
+    event_type: 'ssl'
+    validation_status: 'self signed certificate'
+    server_name|contains:
+      - '.onion'
+      - '.bit'
+      - 'localhost'
+  selection_nonstandard_ssl:
+    event_type: 'ssl'
+    dst_port:
+      - 4443
+      - 8443
+      - 9443
+      - 4444
+      - 1337
+      - 31337
+      - 8888
+      - 9090
+  selection_short_lived_cert:
+    event_type: 'x509'
+    certificate.not_valid_after|lt: 30
+  condition: selection_self_signed or selection_nonstandard_ssl or selection_short_lived_cert
+falsepositives:
+  - Internal development servers with self-signed certs
+  - Non-standard port applications
+level: medium
+
+---
+# T1095 - Non-Application Layer Protocol (ICMP Tunneling)
+title: ICMP Tunneling / Unusual ICMP Traffic
+id: ne5c6d7e-f9a0-1234-cdef-567890123456
+status: stable
+description: Detects potential ICMP tunneling used for C2 communication
+references:
+  - https://attack.mitre.org/techniques/T1095/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.command_and_control
+  - attack.t1095
+logsource:
+  category: network
+  product: zeek
+detection:
+  selection:
+    proto: 'icmp'
+    orig_bytes|gte: 64
+  filter_normal:
+    orig_bytes|lte: 72
+    resp_bytes|lte: 72
+  timeframe: 60s
+  condition: (selection and not filter_normal) | count() by src_ip > 100
+falsepositives:
+  - Network monitoring tools (ping sweeps)
+  - Legitimate ICMP-based services
+level: medium
+
+---
+# T1566.002 - Spear Phishing Link
+title: Suspicious URL Redirect Chain
+id: nf6d7e8f-a0b1-2345-defa-678901234567
+status: stable
+description: Detects multi-hop URL redirection patterns commonly used in phishing campaigns
+references:
+  - https://attack.mitre.org/techniques/T1566/002/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.initial_access
+  - attack.t1566.002
+logsource:
+  category: proxy
+detection:
+  selection_redirect:
+    sc-status:
+      - 301
+      - 302
+      - 303
+      - 307
+      - 308
+    cs-referer|contains:
+      - 'bit.ly'
+      - 'tinyurl.com'
+      - 't.co'
+      - 'ow.ly'
+      - 'rb.gy'
+      - 'cutt.ly'
+      - 'shorturl.at'
+      - 'tiny.cc'
+  selection_malicious_tld:
+    c-uri-stem|endswith:
+      - '.xyz'
+      - '.tk'
+      - '.ml'
+      - '.ga'
+      - '.cf'
+      - '.pw'
+      - '.top'
+  condition: selection_redirect or selection_malicious_tld
+falsepositives:
+  - Legitimate URL shortening services
+  - Marketing email links
+level: low
+
+---
+# T1090 - Proxy / Multi-Hop Proxy
+title: TOR Exit Node or Known Proxy Connection
+id: n07e8f9a-b1c2-3456-efab-789012345678
+status: stable
+description: Detects connections from or to known TOR exit nodes and anonymization proxies
+references:
+  - https://attack.mitre.org/techniques/T1090/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.defense_evasion
+  - attack.t1090
+  - attack.command_and_control
+logsource:
+  category: firewall
+detection:
+  selection_tor_ports:
+    dst_port:
+      - 9001
+      - 9030
+      - 9050
+      - 9051
+      - 9150
+      - 9999
+  selection_proxy_ports:
+    dst_port:
+      - 1080
+      - 3128
+      - 8080
+      - 8118
+      - 8888
+      - 9999
+    direction: outbound
+  selection_vpn_unusual:
+    dst_port:
+      - 1194
+      - 1723
+    direction: outbound
+  filter_corporate_vpn:
+    dst_ip|startswith:
+      - '10.'
+      - '192.168.'
+  condition: selection_tor_ports or (selection_proxy_ports and not filter_corporate_vpn) or selection_vpn_unusual
+falsepositives:
+  - Corporate proxy servers
+  - Authorized VPN usage
+  - Security researchers
+level: medium
+
+---
+# T1219 - Remote Access Software
+title: Remote Access Tool (RAT) C2 Detection
+id: n18f9a0b-c2d3-4567-fabc-890123456789
+status: stable
+description: Detects known RAT and C2 framework communication patterns
+references:
+  - https://attack.mitre.org/techniques/T1219/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.command_and_control
+  - attack.t1219
+logsource:
+  category: network
+  product: zeek
+detection:
+  selection_metasploit:
+    dst_port:
+      - 4444
+      - 4445
+      - 5555
+    proto: 'tcp'
+  selection_empire:
+    dst_port:
+      - 8080
+      - 8443
+      - 443
+    uri|contains:
+      - '/admin/get.php'
+      - '/news.php'
+      - '/login/process.php'
+      - '/index.jsp'
+  selection_async_rat:
+    dst_port:
+      - 6606
+      - 7707
+      - 8808
+    proto: 'tcp'
+  selection_quasar:
+    dst_port:
+      - 4782
+      - 1234
+    proto: 'tcp'
+  selection_njrat:
+    dst_port:
+      - 1177
+      - 5552
+    proto: 'tcp'
+  condition: selection_metasploit or selection_empire or selection_async_rat or selection_quasar or selection_njrat
+falsepositives:
+  - Applications using similar ports
+  - Network testing tools
+level: high
+
+---
+# T1566.001 - Malicious Email Attachment
+title: Email with Suspicious Attachment Detected
+id: n29a0b1c-d3e4-5678-abcd-901234567890
+status: stable
+description: Detects emails containing suspicious attachments based on file extension and size
+references:
+  - https://attack.mitre.org/techniques/T1566/001/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.initial_access
+  - attack.t1566.001
+logsource:
+  category: email
+detection:
+  selection_malicious_ext:
+    attachment_extension|contains:
+      - '.exe'
+      - '.dll'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.jse'
+      - '.wsf'
+      - '.wsh'
+      - '.ps1'
+      - '.msi'
+      - '.hta'
+      - '.scr'
+      - '.pif'
+      - '.cpl'
+      - '.reg'
+  selection_double_ext:
+    attachment_name|re: '\.(doc|xls|pdf|jpg|png)\.(exe|bat|cmd|vbs|js|ps1)$'
+  selection_macro_docs:
+    attachment_extension|contains:
+      - '.docm'
+      - '.xlsm'
+      - '.pptm'
+      - '.dotm'
+      - '.xltm'
+  condition: selection_malicious_ext or selection_double_ext or selection_macro_docs
+falsepositives:
+  - Legitimate software distribution via email
+  - Developer environments
+level: high
+
+---
+# T1114 - Email Collection / Business Email Compromise
+title: Suspicious Email Forwarding Rule Created
+id: n30b1c2d-e4f5-6789-bcde-012345678901
+status: stable
+description: Detects creation of email auto-forwarding rules indicating potential BEC or account compromise
+references:
+  - https://attack.mitre.org/techniques/T1114/003/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.collection
+  - attack.t1114.003
+logsource:
+  category: email
+  product: exchange
+detection:
+  selection:
+    EventID:
+      - 'Set-InboxRule'
+      - 'New-InboxRule'
+    Parameters|contains:
+      - 'ForwardTo'
+      - 'RedirectTo'
+      - 'ForwardAsAttachmentTo'
+  filter_internal:
+    ForwardTo|endswith:
+      - '@company.com'
+      - '@internal.local'
+  condition: selection and not filter_internal
+falsepositives:
+  - Legitimate auto-forwarding to personal accounts
+  - Authorized executive email forwarding
+level: high
+
+---
+# T1595 - Active Reconnaissance
+title: Aggressive External Reconnaissance
+id: n41c2d3e-f5a6-7890-cdef-123456789012
+status: stable
+description: Detects aggressive scanning and reconnaissance from external sources
+references:
+  - https://attack.mitre.org/techniques/T1595/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.reconnaissance
+  - attack.t1595
+logsource:
+  category: firewall
+detection:
+  selection:
+    direction: inbound
+    action:
+      - 'deny'
+      - 'drop'
+  filter_internal:
+    src_ip|startswith:
+      - '10.'
+      - '192.168.'
+      - '172.'
+  timeframe: 60s
+  condition: (selection and not filter_internal) | count(dst_port) by src_ip > 50
+falsepositives:
+  - Authorized external security scanning
+  - Misconfigured client applications
+level: medium
+
+---
+# T1485 - Data Destruction / Wiper Malware
+title: Mass File Deletion / Wiper Activity Over Network
+id: n52d3e4f-a6b7-8901-defa-234567890123
+status: stable
+description: Detects network patterns associated with wiper malware spreading laterally
+references:
+  - https://attack.mitre.org/techniques/T1485/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.impact
+  - attack.t1485
+logsource:
+  category: firewall
+detection:
+  selection:
+    proto: 'tcp'
+    dst_port:
+      - 445
+      - 139
+      - 135
+    direction: outbound
+    src_ip|startswith:
+      - '10.'
+      - '192.168.'
+      - '172.'
+  timeframe: 60s
+  condition: selection | count(dst_ip) by src_ip > 50
+falsepositives:
+  - Windows file sharing activity
+  - Domain controller operations
+  - Legitimate network scanning
+level: high
+
+---
+# T1498 - Network Denial of Service
+title: Amplification Attack Detection (DNS/NTP/SSDP)
+id: n63e4f5a-b7c8-9012-efab-345678901234
+status: stable
+description: Detects network amplification attack patterns via DNS, NTP, or SSDP
+references:
+  - https://attack.mitre.org/techniques/T1498/002/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.impact
+  - attack.t1498.002
+logsource:
+  category: network
+  product: zeek
+detection:
+  selection_dns_amp:
+    proto: 'udp'
+    dst_port: 53
+    orig_bytes|gte: 512
+    resp_bytes|gte: 3000
+  selection_ntp_amp:
+    proto: 'udp'
+    dst_port: 123
+    orig_bytes|lte: 48
+    resp_bytes|gte: 400
+  selection_ssdp_amp:
+    proto: 'udp'
+    dst_port: 1900
+    resp_bytes|gte: 1000
+  condition: selection_dns_amp or selection_ntp_amp or selection_ssdp_amp
+falsepositives:
+  - Large DNS ANY query responses
+  - NTP monitoring
+level: high
+
+---
+# T1200 - Hardware Additions / Rogue Device
+title: Rogue DHCP Server Detection
+id: n74f5a6b-c8d9-0123-fabc-456789012345
+status: stable
+description: Detects rogue DHCP servers offering leases, potentially indicating network attack
+references:
+  - https://attack.mitre.org/techniques/T1200/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.initial_access
+  - attack.t1200
+logsource:
+  category: network
+  product: zeek
+detection:
+  selection:
+    proto: 'udp'
+    src_port: 67
+    dst_port: 68
+  filter_known_dhcp:
+    src_ip:
+      - '10.0.0.1'
+      - '192.168.1.1'
+      - '172.16.0.1'
+  condition: selection and not filter_known_dhcp
+falsepositives:
+  - Newly added legitimate DHCP servers
+  - Network reconfiguration
+level: high

@@ -1,0 +1,652 @@
+import os
+import re
+import json
+import logging
+import time
+from typing import Dict, List, Any, Optional
+from datetime import datetime, timezone
+
+import anthropic
+import google.generativeai as genai
+try:
+    from json_repair import repair_json as _repair_json
+    _JSON_REPAIR_AVAILABLE = True
+except ImportError:
+    _JSON_REPAIR_AVAILABLE = False
+
+from ioc_extractor import classify_input_type, get_ioc_summary
+from validator import get_validation_summary
+
+logger = logging.getLogger('threatiq')
+
+# ── Clients ────────────────────────────────────────────────────
+_anthropic_client: Optional[anthropic.Anthropic] = None
+_gemini_model: Optional[Any] = None
+
+
+def _get_claude() -> anthropic.Anthropic:
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(
+            api_key=os.getenv('ANTHROPIC_API_KEY', '')
+        )
+    return _anthropic_client
+
+
+def _get_gemini():
+    global _gemini_model
+    if _gemini_model is None:
+        key = os.getenv('GEMINI_API_KEY', '')
+        if key:
+            genai.configure(api_key=key)
+            _gemini_model = genai.GenerativeModel('gemini-2.0-flash')
+    return _gemini_model
+
+
+# ══════════════════════════════════════════════════════════════
+# SYSTEM PROMPT
+# ══════════════════════════════════════════════════════════════
+
+SYSTEM_PROMPT = """You are a Senior Threat Intelligence Analyst with 15+ years of experience in:
+- MITRE ATT&CK framework mapping and adversary emulation
+- APT group tracking and campaign analysis
+- Malware reverse engineering and behavioral analysis
+- SIEM/SOC operations and incident response
+- Threat hunting and IOC analysis
+
+STRICT OUTPUT RULES:
+1. ALWAYS respond with valid JSON only — no markdown, no prose, no preamble
+2. ALWAYS include minimum 4-8 real MITRE ATT&CK TTPs with actual T-IDs
+3. EVERY TTP must have real technique IDs (e.g., T1059.001 not T1059)
+4. Confidence scores 0-100 for EACH TTP individually
+5. Map ONLY kill chain phases actually evidenced in the input
+6. Name REAL tools: Mimikatz, Cobalt Strike, Metasploit, BloodHound etc.
+7. If IOC only — infer full likely attack chain from context
+8. If input is vague — still give best assessment with lower confidence
+9. NEVER hallucinate TTP IDs — only use real MITRE ATT&CK identifiers
+10. Threat level: CRITICAL(>85% confidence), HIGH(65-85%), MEDIUM(40-65%), LOW(<40%)
+
+JSON SCHEMA (strictly follow this):
+{
+  "threat_level": "CRITICAL|HIGH|MEDIUM|LOW",
+  "overall_confidence": 0-100,
+  "input_type": "log|ioc|description|network|file|hash|ip|url|domain",
+  "summary": "2-3 sentence plain English summary of the threat",
+  "attack_reconstruction": "Step-by-step narrative of how attack happened/is happening",
+  "threat_actor": {
+    "suspected": "APT name or Unknown",
+    "origin": "Country or Unknown",
+    "motivation": "espionage|financial|hacktivism|ransomware|unknown",
+    "confidence": 0-100,
+    "known_campaigns": []
+  },
+  "ttps": [
+    {
+      "technique_id": "T1059.001",
+      "technique_name": "PowerShell",
+      "tactic": "Execution",
+      "tactic_id": "TA0002",
+      "confidence": 0-100,
+      "tools_used": ["PowerShell.exe"],
+      "evidence": "Direct evidence from input",
+      "severity": "critical|high|medium|low",
+      "detection_hint": "How to detect this"
+    }
+  ],
+  "kill_chain": {
+    "reconnaissance": false,
+    "weaponization": false,
+    "delivery": false,
+    "exploitation": false,
+    "installation": false,
+    "command_control": false,
+    "actions_on_objectives": false
+  },
+  "cves": [
+    {
+      "cve_id": "CVE-YYYY-NNNN",
+      "cvss_score": 0.0,
+      "description": "Brief description",
+      "affected_system": "System/software affected"
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": 1,
+      "action": "Immediate action to take",
+      "timeframe": "immediate|24h|1week|ongoing"
+    }
+  ],
+  "ioc_enrichment": {
+    "malware_families": [],
+    "c2_indicators": [],
+    "file_indicators": [],
+    "network_indicators": []
+  }
+}"""
+
+
+# ══════════════════════════════════════════════════════════════
+# CHAIN-OF-THOUGHT PROMPTS
+# ══════════════════════════════════════════════════════════════
+
+def _build_call1_prompt(raw_input: str, input_type: str,
+                         iocs: Dict, ioc_summary: Dict) -> str:
+    return f"""CALL 1 — INPUT CLASSIFICATION & IOC EXTRACTION
+
+Raw Input:
+{raw_input}
+
+Detected Input Type: {input_type}
+Extracted IOCs: {json.dumps(ioc_summary, indent=2)}
+
+Task: Analyze this input and:
+1. Confirm the input type classification
+2. Identify ALL indicators of compromise present
+3. Extract any additional context (timestamps, hostnames, usernames, processes)
+4. Identify initial attack vector if visible
+
+Return ONLY this JSON:
+{{
+  "confirmed_type": "...",
+  "key_indicators": [],
+  "attack_vector": "...",
+  "initial_context": {{}}
+}}"""
+
+
+def _build_call2_prompt(raw_input: str, call1_result: Dict,
+                         iocs: Dict, validation_summary: Dict) -> str:
+    return f"""CALL 2 — MITRE ATT&CK MAPPING
+
+Raw Input:
+{raw_input}
+
+Initial Analysis: {json.dumps(call1_result, indent=2)}
+IOC Validation Summary: {json.dumps(validation_summary, indent=2)}
+
+Task: Map ALL observable behaviors to MITRE ATT&CK framework.
+- Use REAL technique IDs with sub-technique precision (T1059.001 not T1059)
+- Map to correct tactics (TA0001-TA0011)
+- Score confidence individually per TTP
+- Identify the kill chain phases covered
+
+Return ONLY this JSON:
+{{
+  "ttps": [
+    {{
+      "technique_id": "T...",
+      "technique_name": "...",
+      "tactic": "...",
+      "tactic_id": "TA...",
+      "confidence": 0-100,
+      "tools_used": [],
+      "evidence": "...",
+      "severity": "critical|high|medium|low",
+      "detection_hint": "..."
+    }}
+  ],
+  "kill_chain": {{
+    "reconnaissance": false,
+    "weaponization": false,
+    "delivery": false,
+    "exploitation": false,
+    "installation": false,
+    "command_control": false,
+    "actions_on_objectives": false
+  }}
+}}"""
+
+
+def _build_call3_prompt(raw_input: str, call1_result: Dict,
+                         call2_result: Dict, iocs: Dict) -> str:
+    return f"""CALL 3 — THREAT ACTOR & CAMPAIGN ATTRIBUTION
+
+Raw Input:
+{raw_input}
+
+TTPs Found: {json.dumps([t.get('technique_id') for t in call2_result.get('ttps', [])], indent=2)}
+Tools Used: {json.dumps(list(set(t for ttp in call2_result.get('ttps', []) for t in ttp.get('tools_used', []))), indent=2)}
+
+Task: Based on the TTPs, tools, and IOCs:
+1. Identify possible threat actor / APT group
+2. Identify motivation (espionage/financial/ransomware/hacktivism)
+3. Reference known campaigns if applicable
+4. Identify any CVEs being exploited
+
+Return ONLY this JSON:
+{{
+  "threat_actor": {{
+    "suspected": "...",
+    "origin": "...",
+    "motivation": "...",
+    "confidence": 0-100,
+    "known_campaigns": [],
+    "ttps_overlap": []
+  }},
+  "cves": [],
+  "ioc_enrichment": {{
+    "malware_families": [],
+    "c2_indicators": [],
+    "file_indicators": [],
+    "network_indicators": []
+  }}
+}}"""
+
+
+def _build_call4_prompt(raw_input: str, call1_result: Dict,
+                         call2_result: Dict, call3_result: Dict,
+                         validation_summary: Dict) -> str:
+    ttps_count = len(call2_result.get('ttps', []))
+    avg_confidence = (
+        sum(t.get('confidence', 0) for t in call2_result.get('ttps', []))
+        / ttps_count if ttps_count else 0
+    )
+    actor_confidence = call3_result.get('threat_actor', {}).get('confidence', 0)
+
+    return f"""CALL 4 — FINAL SYNTHESIS & RECOMMENDATIONS
+
+Full Input:
+{raw_input}
+
+Analysis Summary:
+- Input Type: {call1_result.get('confirmed_type', 'unknown')}
+- TTPs Found: {ttps_count}
+- Average TTP Confidence: {avg_confidence:.1f}%
+- Actor Attribution Confidence: {actor_confidence}%
+- Validation Boost: +{validation_summary.get('total_boost', 0)}%
+- Malicious IOCs: {validation_summary.get('malicious', 0)}
+
+Task: Generate final complete threat assessment:
+1. Calculate overall_confidence = (avg_ttp_confidence + actor_confidence + validation_boost) / 2.5
+2. Determine threat_level based on overall_confidence
+3. Write concise summary (2-3 sentences)
+4. Write attack_reconstruction (step-by-step narrative)
+5. Generate prioritized recommendations
+
+Return the COMPLETE final JSON matching the full schema exactly."""
+
+
+# ══════════════════════════════════════════════════════════════
+# API CALLERS
+# ══════════════════════════════════════════════════════════════
+
+def _fix_json_strings(s: str) -> str:
+    """Fix unescaped control characters inside JSON string values (char-by-char scanner)."""
+    result = []
+    in_string = False
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == '\\' and in_string:
+            # Consume the escape sequence as-is
+            result.append(c)
+            i += 1
+            if i < len(s):
+                result.append(s[i])
+                i += 1
+            continue
+        if c == '"':
+            in_string = not in_string
+            result.append(c)
+        elif in_string and c == '\n':
+            result.append('\\n')
+        elif in_string and c == '\r':
+            result.append('\\r')
+        elif in_string and c == '\t':
+            result.append('\\t')
+        else:
+            result.append(c)
+        i += 1
+    return ''.join(result)
+
+
+def _parse_llm_json(raw: str) -> Dict:
+    """Robustly parse JSON from LLM output — handles all common LLM JSON issues."""
+    original = raw  # keep for error reporting
+
+    # ── Attempt 1: json_repair library (handles fences, unescaped chars, truncation) ──
+    if _JSON_REPAIR_AVAILABLE:
+        try:
+            repaired = _repair_json(raw, return_objects=True)
+            if isinstance(repaired, dict) and repaired:
+                return repaired
+        except Exception:
+            pass
+
+    # ── Manual preprocessing: strip markdown code fences ──────────────────────────────
+    raw = re.sub(r'^[ \t]*```+(?:json)?[ \t]*\n?', '', raw, flags=re.MULTILINE)
+    raw = re.sub(r'\n?[ \t]*```+[ \t]*$', '', raw, flags=re.MULTILINE)
+    raw = re.sub(r'```(?:json)?', '', raw)
+    raw = raw.strip().strip('`').strip()
+
+    # Extract outermost JSON object
+    start = raw.find('{')
+    end = raw.rfind('}')
+    if start == -1 or end == -1 or start > end:
+        logger.error(f"_parse_llm_json: no JSON braces found. Raw: {repr(original[:200])}")
+        raise json.JSONDecodeError("No JSON object found", original, 0)
+    raw = raw[start:end + 1]
+
+    # Fix Python-style booleans/null + trailing commas
+    raw = re.sub(r'\bTrue\b', 'true', raw)
+    raw = re.sub(r'\bFalse\b', 'false', raw)
+    raw = re.sub(r'\bNone\b', 'null', raw)
+    raw = re.sub(r',\s*([}\]])', r'\1', raw)
+
+    # ── Attempt 2: direct parse after preprocessing ────────────────────────────────────
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e1:
+        logger.info(f"_parse_llm_json Attempt 2 failed pos={e1.pos}: {e1.msg} | {repr(raw[max(0,e1.pos-30):e1.pos+50])}")
+
+    # ── Attempt 3: fix unescaped control chars inside strings ─────────────────────────
+    fixed = _fix_json_strings(raw)
+    fixed = re.sub(r',\s*([}\]])', r'\1', fixed)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError as e2:
+        logger.info(f"_parse_llm_json Attempt 3 failed pos={e2.pos}: {e2.msg} | {repr(fixed[max(0,e2.pos-30):e2.pos+50])}")
+
+    # ── Attempt 4: fix missing commas between adjacent values ────────────────────────
+    fixed2 = re.sub(r'("(?:[^"\\]|\\.)*")\s*\n(\s*")', r'\1,\n\2', fixed)
+    fixed2 = re.sub(r'(true|false|null|\d+(?:\.\d+)?)\s*\n(\s*")', r'\1,\n\2', fixed2)
+    fixed2 = re.sub(r'(\})\s*\n(\s*\{)', r'\1,\n\2', fixed2)
+    fixed2 = re.sub(r',\s*([}\]])', r'\1', fixed2)
+    try:
+        return json.loads(fixed2)
+    except json.JSONDecodeError as e3:
+        logger.info(f"_parse_llm_json Attempt 4 failed pos={e3.pos}: {e3.msg}")
+
+    # ── Attempt 5: backward walk to find last parseable prefix ───────────────────────
+    for i in range(len(fixed2) - 1, max(0, len(fixed2) - 3000), -1):
+        if fixed2[i] == '}':
+            try:
+                result = json.loads(fixed2[:i + 1])
+                logger.info(f"_parse_llm_json: Attempt 5 backward-walk succeeded at pos {i}")
+                return result
+            except json.JSONDecodeError:
+                continue
+
+    # ── Attempt 6: json_repair on preprocessed string (last resort) ──────────────────
+    if _JSON_REPAIR_AVAILABLE:
+        try:
+            repaired = _repair_json(raw, return_objects=True)
+            if isinstance(repaired, dict) and repaired:
+                logger.info("_parse_llm_json: Attempt 6 (json_repair on preprocessed) succeeded")
+                return repaired
+        except Exception:
+            pass
+
+    logger.error(f"_parse_llm_json: ALL 6 attempts failed.")
+    logger.error(f"  original first 400: {repr(original[:400])}")
+    logger.error(f"  processed first 400: {repr(raw[:400])}")
+    raise json.JSONDecodeError("Cannot repair LLM JSON", original[:100], 0)
+
+
+def _call_claude(prompt: str, is_final: bool = False) -> Dict:
+    client = _get_claude()
+    # FIX: use correct current model strings
+    model = 'claude-sonnet-4-6' if is_final else 'claude-haiku-4-5-20251001'
+    max_tokens = 4096 if is_final else 1024
+
+    try:
+        message = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=SYSTEM_PROMPT,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        raw = message.content[0].text.strip()
+        try:
+            return _parse_llm_json(raw)
+        except json.JSONDecodeError as e:
+            logger.error(f"Claude JSON parse FINAL failure: {e}")
+            logger.error(f"Full raw output ({len(raw)} chars): {repr(raw[:600])}")
+            return {}
+    except anthropic.APIStatusError as e:
+        logger.error(f"Claude API error {e.status_code}: {e.message}")
+        raise
+    except Exception as e:
+        logger.error(f"Claude call error: {e}")
+        raise
+
+
+def _call_gemini(prompt: str) -> Optional[Dict]:
+    model = _get_gemini()
+    if not model:
+        return None
+    try:
+        full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
+        response = model.generate_content(
+            full_prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=2048,
+            )
+        )
+        raw = response.text.strip()
+        return _parse_llm_json(raw)
+    except json.JSONDecodeError:
+        return None
+    except Exception as e:
+        logger.warning(f"Gemini call failed: {e}")
+        return None
+
+
+def _merge_results(claude_result: Dict, gemini_result: Optional[Dict]) -> Dict:
+    """Merge Claude and Gemini results, using Gemini to boost confidence."""
+    if not gemini_result:
+        return claude_result
+
+    merged = claude_result.copy()
+
+    # Boost confidence if both agree on threat level
+    if claude_result.get('threat_level') == gemini_result.get('threat_level'):
+        merged['overall_confidence'] = min(
+            100,
+            int(claude_result.get('overall_confidence', 0) * 1.05)
+        )
+        merged['dual_ai_validated'] = True
+    else:
+        merged['dual_ai_validated'] = False
+
+    # FIX: use setdefault to avoid KeyError when key missing
+    existing_ids = {t['technique_id'] for t in merged.get('ttps', [])}
+    ttp_list = merged.setdefault('ttps', [])
+    for ttp in gemini_result.get('ttps', []):
+        if ttp.get('technique_id') not in existing_ids:
+            ttp['source'] = 'gemini'
+            ttp_list.append(ttp)
+            existing_ids.add(ttp['technique_id'])
+
+    # FIX: use setdefault for recommendations too
+    existing_actions = {r['action'] for r in merged.get('recommendations', [])}
+    rec_list = merged.setdefault('recommendations', [])
+    for rec in gemini_result.get('recommendations', []):
+        if rec.get('action') not in existing_actions:
+            rec_list.append(rec)
+
+    merged['ai_engines'] = ['claude', 'gemini']
+    return merged
+
+
+# ══════════════════════════════════════════════════════════════
+# NORMALIZERS  (frontend compatibility)
+# ══════════════════════════════════════════════════════════════
+
+def _normalize_kill_chain_phases(kill_chain: Dict) -> List[str]:
+    """
+    Convert kill_chain dict {phase: bool} → list of active phase strings.
+    Frontend renderKillChain() expects data.kill_chain_phases as a list.
+    """
+    phase_map = {
+        'reconnaissance':        'Reconnaissance',
+        'weaponization':         'Resource Development',
+        'delivery':              'Initial Access',
+        'exploitation':          'Execution',
+        'installation':          'Persistence',
+        'command_control':       'Command and Control',
+        'actions_on_objectives': 'Actions on Objectives',
+    }
+    return [phase_map[k] for k, v in kill_chain.items() if v and k in phase_map]
+
+
+def _normalize_attribution(threat_actor: Dict) -> Dict:
+    """
+    Map threat_actor schema → attribution schema expected by frontend.
+    Frontend renderAttribution() reads:
+      attr.actor_name, attr.confidence, attr.nation_state,
+      attr.motivation, attr.target_sector, attr.aliases
+    """
+    if not threat_actor or threat_actor.get('suspected', 'Unknown') == 'Unknown':
+        return {}
+    return {
+        'actor_name':    threat_actor.get('suspected', 'Unknown'),
+        'confidence':    threat_actor.get('confidence', 0),
+        'nation_state':  threat_actor.get('origin', ''),
+        'motivation':    threat_actor.get('motivation', ''),
+        'target_sector': '',          # enriched by pattern_db if available
+        'aliases':       threat_actor.get('ttps_overlap', []),
+        'known_campaigns': threat_actor.get('known_campaigns', []),
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# MAIN ANALYZER
+# ══════════════════════════════════════════════════════════════
+
+def _build_fallback_result(call2_result: Dict, call3_result: Dict, input_type: str) -> Dict:
+    """Minimal result when Call 4 (final synthesis) fails."""
+    return {
+        'threat_level':           'LOW',
+        'overall_confidence':     20,
+        'input_type':             input_type,
+        'summary':                'Analysis incomplete — final synthesis failed. Partial data shown.',
+        'attack_reconstruction':  'Unable to complete full attack reconstruction.',
+        'threat_actor':           call3_result.get('threat_actor', {
+            'suspected': 'Unknown', 'origin': 'Unknown',
+            'motivation': 'unknown', 'confidence': 0, 'known_campaigns': []
+        }),
+        'ttps':            call2_result.get('ttps', []),
+        'kill_chain':      call2_result.get('kill_chain', {}),
+        'cves':            call3_result.get('cves', []),
+        'recommendations': [],
+        'ioc_enrichment':  {
+            'malware_families': [], 'c2_indicators': [],
+            'file_indicators': [], 'network_indicators': []
+        },
+    }
+
+
+def analyze_threat(
+    raw_input: str,
+    input_type: str,
+    iocs: Dict,
+    validation_results: Dict
+) -> Dict:
+    """
+    Main analysis pipeline.
+    Runs 4-step chain-of-thought with Claude + optional Gemini validation.
+    """
+    start_time = time.time()
+    ioc_summary = get_ioc_summary(iocs)
+    validation_summary = get_validation_summary(validation_results)
+
+    if input_type == 'auto':
+        input_type = classify_input_type(raw_input, iocs)
+
+    logger.info(f"Starting 4-step analysis | type={input_type} | iocs={ioc_summary['total_iocs']}")
+
+    # ── Call 1: Classification ─────────────────────────────────
+    try:
+        prompt1 = _build_call1_prompt(raw_input, input_type, iocs, ioc_summary)
+        call1_result = _call_claude(prompt1, is_final=False)
+        logger.debug("Call 1 complete")
+    except Exception as e:
+        logger.error(f"Call 1 failed: {e}")
+        call1_result = {'confirmed_type': input_type, 'key_indicators': [], 'attack_vector': 'unknown'}
+
+    # ── Call 2: TTP Mapping ────────────────────────────────────
+    try:
+        prompt2 = _build_call2_prompt(raw_input, call1_result, iocs, validation_summary)
+        call2_result = _call_claude(prompt2, is_final=False)
+        logger.debug(f"Call 2 complete | ttps={len(call2_result.get('ttps', []))}")
+    except Exception as e:
+        logger.error(f"Call 2 failed: {e}")
+        call2_result = {'ttps': [], 'kill_chain': {}}
+
+    # ── Call 3: Attribution ────────────────────────────────────
+    try:
+        prompt3 = _build_call3_prompt(raw_input, call1_result, call2_result, iocs)
+        call3_result = _call_claude(prompt3, is_final=False)
+        logger.debug("Call 3 complete")
+    except Exception as e:
+        logger.error(f"Call 3 failed: {e}")
+        call3_result = {'threat_actor': {'suspected': 'Unknown'}, 'cves': []}
+
+
+    # ── Call 4: Final Synthesis (Claude Sonnet) ────────────────
+    try:
+        prompt4 = _build_call4_prompt(
+            raw_input, call1_result, call2_result,
+            call3_result, validation_summary
+        )
+        final_result = _call_claude(prompt4, is_final=True)
+        logger.debug("Call 4 complete — final synthesis done")
+    except Exception as e:
+        logger.error(f"Call 4 failed: {e}")
+        final_result = _build_fallback_result(call2_result, call3_result, input_type)
+
+    # ── Gemini Second Opinion ──────────────────────────────────
+    gemini_prompt = _build_call4_prompt(
+        raw_input, call1_result, call2_result, call3_result, validation_summary
+    )
+    gemini_result = _call_gemini(gemini_prompt)
+    if gemini_result:
+        logger.info("Gemini validation complete — merging results")
+        final_result = _merge_results(final_result, gemini_result)
+
+    # ── Final confidence adjustment ────────────────────────────
+    base_confidence = final_result.get('overall_confidence', 50)
+    boosted = min(100, base_confidence + validation_summary.get('total_boost', 0))
+    final_result['overall_confidence'] = boosted
+
+    if boosted >= 85:
+        final_result['threat_level'] = 'CRITICAL'
+    elif boosted >= 65:
+        final_result['threat_level'] = 'HIGH'
+    elif boosted >= 40:
+        final_result['threat_level'] = 'MEDIUM'
+    else:
+        final_result['threat_level'] = 'LOW'
+
+    # ── Inject metadata ────────────────────────────────────────
+    final_result['ioc_summary']        = ioc_summary
+    final_result['extracted_iocs']     = iocs
+    final_result['validation_summary'] = validation_summary
+    final_result['analysis_metadata']  = {
+        'input_type':         input_type,
+        'processing_time_ms': int((time.time() - start_time) * 1000),
+        'ai_calls':           4,
+        'dual_ai':            bool(gemini_result),
+        'analyzed_at':        datetime.now(timezone.utc).isoformat(),
+    }
+
+    # confidence aliases — frontend reads both names
+    final_result['confidence']       = boosted
+    final_result['confidence_score'] = boosted
+
+    # kill_chain_phases list — frontend renderKillChain() needs this
+    kill_chain_dict = final_result.get('kill_chain', call2_result.get('kill_chain', {}))
+    final_result['kill_chain_phases'] = _normalize_kill_chain_phases(kill_chain_dict)
+
+    # attribution dict — frontend renderAttribution() needs this
+    threat_actor = final_result.get('threat_actor', call3_result.get('threat_actor', {}))
+    final_result['attribution'] = _normalize_attribution(threat_actor)
+
+    logger.info(
+        f"Analysis complete | level={final_result.get('threat_level')} "
+        f"| confidence={boosted}% | time={int((time.time() - start_time) * 1000)}ms"
+    )
+    return final_result

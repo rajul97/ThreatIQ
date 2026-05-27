@@ -1,0 +1,973 @@
+# ThreatIQ SIGMA Templates - Windows
+# Version: 2.0 | Framework: SIGMA v1.0.4
+# Compatible: Splunk, Elastic, QRadar, Microsoft Sentinel, Chronicle
+
+---
+# T1059.001 - PowerShell Execution
+title: Suspicious PowerShell Execution
+id: 3b6ab547-8ec7-4fc3-a8b5-92e7a8f3d1c2
+status: stable
+description: Detects suspicious PowerShell command-line arguments commonly used in attacks
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+author: ThreatIQ
+date: 2025/01/01
+modified: 2025/01/01
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense_evasion
+  - attack.t1027
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+  selection_cli:
+    CommandLine|contains:
+      - ' -enc '
+      - ' -EncodedCommand '
+      - ' -w hidden'
+      - ' -WindowStyle Hidden'
+      - ' -nop '
+      - ' -NonInteractive '
+      - ' -NoProfile '
+      - 'IEX('
+      - 'Invoke-Expression'
+      - 'Invoke-Mimikatz'
+      - 'Invoke-Empire'
+      - 'Invoke-Shellcode'
+      - 'DownloadString'
+      - 'DownloadFile'
+      - 'WebClient'
+      - 'Net.WebClient'
+      - 'WScript.Shell'
+      - 'bypass'
+      - '-ExecutionPolicy bypass'
+      - 'FromBase64String'
+      - 'ToBase64String'
+      - 'Reflection.Assembly'
+      - 'System.Reflection'
+      - 'OpenRead'
+      - 'GetString'
+      - 'AmsiInitFailed'
+  condition: selection_img and selection_cli
+falsepositives:
+  - Legitimate administrative scripts
+  - Software deployment tools (SCCM, Intune)
+  - Antivirus products
+level: high
+fields:
+  - CommandLine
+  - ParentCommandLine
+  - User
+  - Image
+  - ParentImage
+
+---
+# T1059.003 - Windows Command Shell
+title: Suspicious cmd.exe Execution
+id: 4c7bc658-9fd8-5ge4-b6c6-a3f8b9g4e2d3
+status: stable
+description: Detects suspicious command shell execution patterns used in lateral movement and execution
+references:
+  - https://attack.mitre.org/techniques/T1059/003/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.execution
+  - attack.t1059.003
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\cmd.exe'
+    CommandLine|contains:
+      - '/c echo'
+      - 'wscript'
+      - 'cscript'
+      - 'certutil -decode'
+      - 'certutil -urlcache'
+      - 'bitsadmin /transfer'
+      - 'net user /add'
+      - 'net localgroup administrators'
+      - 'reg add'
+      - 'schtasks /create'
+      - 'at '
+      - 'wmic process call create'
+      - 'mshta'
+      - 'rundll32'
+      - 'regsvr32'
+      - 'whoami /all'
+      - 'nltest /domain_trusts'
+      - 'net view /domain'
+  condition: selection
+falsepositives:
+  - Administrative tasks
+  - Software installers
+level: medium
+
+---
+# T1053.005 - Scheduled Task Creation
+title: Suspicious Scheduled Task Creation
+id: 5d8cd769-aed9-6hf5-c7d7-b4g9c0h5f3e4
+status: stable
+description: Detects creation of scheduled tasks often used for persistence
+references:
+  - https://attack.mitre.org/techniques/T1053/005/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.persistence
+  - attack.t1053.005
+  - attack.execution
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|contains: '/create'
+  filter_legitimate:
+    CommandLine|contains:
+      - 'Microsoft'
+      - 'Windows'
+      - 'Adobe'
+      - 'Google Update'
+  selection_suspicious:
+    CommandLine|contains:
+      - 'powershell'
+      - 'cmd.exe'
+      - 'wscript'
+      - 'cscript'
+      - 'mshta'
+      - 'regsvr32'
+      - 'rundll32'
+      - 'certutil'
+      - 'bitsadmin'
+      - '%APPDATA%'
+      - '%TEMP%'
+      - '%TMP%'
+      - 'C:\Users\Public'
+      - 'C:\ProgramData'
+  condition: selection and selection_suspicious and not filter_legitimate
+falsepositives:
+  - Legitimate software installations
+  - Administrative automation scripts
+level: high
+
+---
+# T1078 - Valid Accounts / Lateral Movement
+title: Suspicious Logon with Valid Credentials
+id: 6e9de87a-bfe0-7ig6-d8e8-c5h0d1i6g4f5
+status: stable
+description: Detects suspicious authentication patterns indicating credential abuse or lateral movement
+references:
+  - https://attack.mitre.org/techniques/T1078/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.defense_evasion
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1078
+  - attack.lateral_movement
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID:
+      - 4624
+      - 4648
+    LogonType:
+      - 3
+      - 10
+  filter_local:
+    SourceNetworkAddress|startswith:
+      - '127.'
+      - '::1'
+  selection_after_hours:
+    EventID: 4624
+    LogonType: 3
+  condition: (selection and not filter_local)
+falsepositives:
+  - Legitimate remote access
+  - IT administrative tools
+  - VPN connections
+level: low
+
+---
+# T1055 - Process Injection
+title: Suspicious Process Injection
+id: 7f0ef98b-cgf1-8jh7-e9f9-d6i1e2j7h5g6
+status: stable
+description: Detects process injection techniques via suspicious API calls and process relationships
+references:
+  - https://attack.mitre.org/techniques/T1055/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.defense_evasion
+  - attack.privilege_escalation
+  - attack.t1055
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_parent_suspicious:
+    ParentImage|endswith:
+      - '\svchost.exe'
+      - '\lsass.exe'
+      - '\services.exe'
+      - '\winlogon.exe'
+      - '\csrss.exe'
+      - '\smss.exe'
+      - '\wininit.exe'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '\mshta.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\regsvr32.exe'
+      - '\rundll32.exe'
+  condition: selection_parent_suspicious
+falsepositives:
+  - Some legitimate software may spawn processes from service hosts
+level: high
+
+---
+# T1027 - Obfuscated Files / LOLBins
+title: Living Off The Land Binary Abuse (LOLBins)
+id: 8g1fg09c-dgh2-9ki8-f0g0-e7j2f3k8i6h7
+status: stable
+description: Detects abuse of Windows built-in tools for malicious purposes (LOLBAS)
+references:
+  - https://attack.mitre.org/techniques/T1027/
+  - https://lolbas-project.github.io/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.defense_evasion
+  - attack.t1027
+  - attack.execution
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_certutil:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains:
+      - '-urlcache'
+      - '-decode'
+      - '-decodehex'
+      - '-encode'
+      - '-exportPFX'
+  selection_mshta:
+    Image|endswith: '\mshta.exe'
+    CommandLine|contains:
+      - 'http'
+      - 'vbscript'
+      - 'javascript'
+  selection_regsvr32:
+    Image|endswith: '\regsvr32.exe'
+    CommandLine|contains:
+      - '/s'
+      - '/u'
+      - '/i:http'
+      - '/i:ftp'
+      - 'scrobj.dll'
+  selection_rundll32:
+    Image|endswith: '\rundll32.exe'
+    CommandLine|contains:
+      - 'javascript:'
+      - 'vbscript:'
+      - 'shell32.dll,ShellExec_RunDLL'
+      - ',EntryPoint'
+  selection_bitsadmin:
+    Image|endswith: '\bitsadmin.exe'
+    CommandLine|contains:
+      - '/transfer'
+      - '/download'
+  selection_wmic:
+    Image|endswith: '\wmic.exe'
+    CommandLine|contains:
+      - 'process call create'
+      - '/node:'
+      - 'shadowcopy delete'
+  condition: selection_certutil or selection_mshta or selection_regsvr32 or selection_rundll32 or selection_bitsadmin or selection_wmic
+falsepositives:
+  - System administration tasks
+  - Software deployment
+level: high
+
+---
+# T1003.001 - LSASS Memory Dumping (Credential Access)
+title: LSASS Memory Access - Credential Dumping
+id: 9h2gh10d-ehi3-0lj9-g1h1-f8k3g4l9j7i8
+status: stable
+description: Detects attempts to access LSASS memory for credential dumping (Mimikatz, ProcDump, etc.)
+references:
+  - https://attack.mitre.org/techniques/T1003/001/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+logsource:
+  category: process_access
+  product: windows
+detection:
+  selection:
+    TargetImage|endswith: '\lsass.exe'
+    GrantedAccess|contains:
+      - '0x1010'
+      - '0x1038'
+      - '0x40'
+      - '0x1fffff'
+  filter_legit:
+    SourceImage|endswith:
+      - '\MsMpEng.exe'
+      - '\WerFault.exe'
+      - '\taskmgr.exe'
+      - '\svchost.exe'
+      - '\csrss.exe'
+  condition: selection and not filter_legit
+falsepositives:
+  - Legitimate security software
+  - Crash dump utilities
+level: critical
+
+---
+# T1082 - System Information Discovery
+title: System Discovery via Built-in Commands
+id: 0i3hi21e-fij4-1mk0-h2i2-g9l4h5m0k8j9
+status: stable
+description: Detects bulk system reconnaissance using native Windows commands
+references:
+  - https://attack.mitre.org/techniques/T1082/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.discovery
+  - attack.t1082
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith:
+      - '\whoami.exe'
+      - '\ipconfig.exe'
+      - '\netstat.exe'
+      - '\systeminfo.exe'
+      - '\net.exe'
+      - '\net1.exe'
+      - '\nltest.exe'
+      - '\arp.exe'
+      - '\route.exe'
+      - '\tasklist.exe'
+    CommandLine|contains:
+      - '/all'
+      - '/domain'
+      - '/dclist'
+      - 'domain_trusts'
+      - '/enum'
+  timeframe: 60s
+  condition: selection | count() by ParentCommandLine > 5
+falsepositives:
+  - Administrator performing inventory
+  - Legitimate discovery tools
+level: medium
+
+---
+# T1083 - File and Directory Discovery
+title: Suspicious File System Enumeration
+id: 1j4ij32f-gjk5-2nl1-i3j3-h0m5i6n1l9k0
+status: stable
+description: Detects enumeration of sensitive file system locations by potentially malicious processes
+references:
+  - https://attack.mitre.org/techniques/T1083/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.discovery
+  - attack.t1083
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+    CommandLine|contains:
+      - 'dir C:\Users'
+      - 'dir C:\Windows\System32'
+      - 'Get-ChildItem'
+      - 'ls C:\'
+      - 'tree C:\'
+      - 'findstr /si password'
+      - 'findstr /si passwd'
+      - 'dir /s *pass*'
+      - 'dir /s *.config'
+      - 'dir /s *.kdbx'
+      - 'dir /s *.key'
+  condition: selection
+falsepositives:
+  - Legitimate file searches
+  - Backup software
+level: medium
+
+---
+# T1041 - Exfiltration Over C2
+title: Suspicious Network Connection from Non-Browser Process
+id: 2k5jk43g-hkl6-3om2-j4k4-i1n6j7o2m0l1
+status: stable
+description: Detects suspicious outbound connections on common exfiltration ports from unexpected processes
+references:
+  - https://attack.mitre.org/techniques/T1041/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.exfiltration
+  - attack.t1041
+logsource:
+  category: network_connection
+  product: windows
+detection:
+  selection:
+    Initiated: 'true'
+    DestinationPort:
+      - 443
+      - 80
+      - 8080
+      - 8443
+      - 4444
+      - 1337
+      - 31337
+  filter_legit_browsers:
+    Image|endswith:
+      - '\chrome.exe'
+      - '\firefox.exe'
+      - '\msedge.exe'
+      - '\iexplore.exe'
+      - '\opera.exe'
+      - '\brave.exe'
+      - '\svchost.exe'
+      - '\MsMpEng.exe'
+  selection_suspicious:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\cmd.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\mshta.exe'
+      - '\rundll32.exe'
+      - '\regsvr32.exe'
+  condition: selection and selection_suspicious and not filter_legit_browsers
+falsepositives:
+  - Some legitimate applications using PowerShell for updates
+level: high
+
+---
+# T1490 - Inhibit System Recovery (Ransomware)
+title: Shadow Copy Deletion - Ransomware Indicator
+id: 3l6kl54h-ilm7-4pn3-k5l5-j2o7k8p3n1m2
+status: stable
+description: Detects deletion of volume shadow copies, a common ransomware pre-encryption step
+references:
+  - https://attack.mitre.org/techniques/T1490/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.impact
+  - attack.t1490
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_vssadmin:
+    Image|endswith: '\vssadmin.exe'
+    CommandLine|contains:
+      - 'delete shadows'
+      - 'Delete Shadows'
+      - 'resize shadowstorage'
+  selection_wmic:
+    Image|endswith: '\wmic.exe'
+    CommandLine|contains:
+      - 'shadowcopy delete'
+      - 'shadowcopy where'
+      - 'Delete'
+  selection_powershell:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains:
+      - 'Get-WmiObject Win32_Shadowcopy'
+      - 'Win32_ShadowCopy'
+      - 'Delete()'
+  selection_bcdedit:
+    Image|endswith: '\bcdedit.exe'
+    CommandLine|contains:
+      - '/set recoveryenabled no'
+      - '/set bootstatuspolicy'
+      - 'ignoreallfailures'
+  condition: selection_vssadmin or selection_wmic or selection_powershell or selection_bcdedit
+falsepositives:
+  - Legitimate backup software
+  - System maintenance tasks
+level: critical
+
+---
+# T1486 - Data Encrypted for Impact (Ransomware)
+title: Mass File Encryption Activity - Ransomware
+id: 4m7lm65i-jmn8-5qo4-l6m6-k3p8l9q4o2n3
+status: stable
+description: Detects rapid mass file modification/encryption patterns indicative of ransomware
+references:
+  - https://attack.mitre.org/techniques/T1486/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.impact
+  - attack.t1486
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    EventID: 4663
+    ObjectType: File
+    AccessMask: '0x2'
+  filter_common:
+    ProcessName|endswith:
+      - '\svchost.exe'
+      - '\System'
+      - '\SearchIndexer.exe'
+      - '\MsMpEng.exe'
+  timeframe: 30s
+  condition: selection and not filter_common | count() by ProcessName > 100
+falsepositives:
+  - Backup software
+  - File compression/archiving tools
+  - Antivirus scanning
+level: critical
+
+---
+# T1136 - Create Account
+title: New Local User Account Created
+id: 5n8mn76j-kno9-6rp5-m7n7-l4q9m0r5p3o4
+status: stable
+description: Detects creation of new local user accounts, often used for backdoor persistence
+references:
+  - https://attack.mitre.org/techniques/T1136/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.persistence
+  - attack.t1136
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4720
+  filter_legit:
+    SubjectUserName|contains:
+      - 'SYSTEM'
+      - 'Administrator'
+  condition: selection
+falsepositives:
+  - IT provisioning processes
+  - Legitimate user account creation
+level: medium
+
+---
+# T1021.002 - Remote Services: SMB/Windows Admin Shares
+title: Lateral Movement via PsExec / SMB Admin Shares
+id: 6o9no87k-lop0-7sq6-n8o8-m5r0n1s6q4p5
+status: stable
+description: Detects lateral movement using PsExec or Windows administrative shares
+references:
+  - https://attack.mitre.org/techniques/T1021/002/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.lateral_movement
+  - attack.t1021.002
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_psexec:
+    EventID: 7045
+    ServiceName|contains:
+      - 'PSEXESVC'
+      - 'psexec'
+  selection_smb_admin:
+    EventID: 5140
+    ShareName:
+      - 'ADMIN$'
+      - 'C$'
+      - 'IPC$'
+  selection_remote_service:
+    EventID: 4697
+    ServiceFileName|contains:
+      - '\\ADMIN$\\'
+      - '\\C$\\'
+  condition: selection_psexec or selection_smb_admin or selection_remote_service
+falsepositives:
+  - Legitimate IT administration via PsExec
+  - Authorized remote management
+level: high
+
+---
+# T1070.001 - Clear Windows Event Logs
+title: Windows Event Log Cleared
+id: 7p0op98l-mpq1-8tr7-o9p9-n6s1o2t7r5q6
+status: stable
+description: Detects clearing of Windows event logs, a common anti-forensics technique
+references:
+  - https://attack.mitre.org/techniques/T1070/001/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.defense_evasion
+  - attack.t1070.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID:
+      - 1102
+      - 104
+  condition: selection
+falsepositives:
+  - Legitimate log rotation (rare, should be scheduled)
+level: high
+
+---
+# T1112 - Modify Registry
+title: Suspicious Registry Modification for Persistence
+id: 8q1pq09m-nqr2-9us8-p0q0-o7t2p3u8s6r7
+status: stable
+description: Detects modification of registry run keys commonly used for persistence
+references:
+  - https://attack.mitre.org/techniques/T1112/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.persistence
+  - attack.t1112
+logsource:
+  category: registry_set
+  product: windows
+detection:
+  selection:
+    TargetObject|contains:
+      - 'Software\Microsoft\Windows\CurrentVersion\Run'
+      - 'Software\Microsoft\Windows\CurrentVersion\RunOnce'
+      - 'Software\Microsoft\Windows NT\CurrentVersion\Winlogon'
+      - 'SYSTEM\CurrentControlSet\Services'
+      - 'Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders'
+      - 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
+  filter_legit:
+    Image|endswith:
+      - '\msiexec.exe'
+      - '\setup.exe'
+      - '\install.exe'
+  condition: selection and not filter_legit
+falsepositives:
+  - Software installations
+  - System configuration changes
+level: medium
+
+---
+# T1566.001 - Spear Phishing Attachment
+title: Suspicious Office Macro Execution
+id: 9r2qr10n-ors3-0vt9-q1r1-p8u3q4v9t7s8
+status: stable
+description: Detects Office macro execution spawning suspicious child processes
+references:
+  - https://attack.mitre.org/techniques/T1566/001/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.initial_access
+  - attack.t1566.001
+  - attack.execution
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_parent:
+    ParentImage|endswith:
+      - '\WINWORD.EXE'
+      - '\EXCEL.EXE'
+      - '\POWERPNT.EXE'
+      - '\OUTLOOK.EXE'
+      - '\MSPUB.EXE'
+      - '\VISIO.EXE'
+  selection_child:
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\mshta.exe'
+      - '\regsvr32.exe'
+      - '\rundll32.exe'
+      - '\certutil.exe'
+      - '\bitsadmin.exe'
+      - '\schtasks.exe'
+      - '\net.exe'
+      - '\net1.exe'
+  condition: selection_parent and selection_child
+falsepositives:
+  - Macros used for legitimate automation (should be rare in modern environments)
+level: critical
+
+---
+# T1505.003 - Web Shell
+title: Web Shell Detection on Windows IIS
+id: 0s3rs21o-pst4-1wu0-r2s2-q9v4r5w0u8t9
+status: stable
+description: Detects web shell execution patterns on Windows IIS servers
+references:
+  - https://attack.mitre.org/techniques/T1505/003/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.persistence
+  - attack.t1505.003
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    ParentImage|endswith:
+      - '\w3wp.exe'
+      - '\httpd.exe'
+      - '\nginx.exe'
+      - '\apache.exe'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+      - '\net.exe'
+      - '\ipconfig.exe'
+      - '\whoami.exe'
+      - '\systeminfo.exe'
+  condition: selection
+falsepositives:
+  - Legitimate web application server management scripts
+level: critical
+
+---
+# T1574.002 - DLL Hijacking / Side-Loading
+title: Suspicious DLL Load from Writable Directory
+id: 1t4st32p-qtu5-2xv1-s3t3-r0w5s6x1v9u0
+status: stable
+description: Detects DLL side-loading from user-writable directories
+references:
+  - https://attack.mitre.org/techniques/T1574/002/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.t1574.002
+logsource:
+  category: image_load
+  product: windows
+detection:
+  selection:
+    ImageLoaded|contains:
+      - 'C:\Users'
+      - 'C:\ProgramData'
+      - 'C:\Windows\Temp'
+      - 'C:\Temp'
+      - '%APPDATA%'
+    ImageLoaded|endswith: '.dll'
+  filter_legit:
+    ImageLoaded|contains:
+      - '\AppData\Local\Microsoft'
+      - '\AppData\Roaming\Microsoft'
+  condition: selection and not filter_legit
+falsepositives:
+  - Portable applications
+  - Some legitimate software installed in user space
+level: medium
+
+---
+# T1021.001 - Remote Desktop Protocol
+title: Suspicious RDP Connection
+id: 2u5tu43q-ruv6-3yw2-t4u4-s1x6t7y2w0v1
+status: stable
+description: Detects suspicious RDP connections including from unusual sources or at unusual times
+references:
+  - https://attack.mitre.org/techniques/T1021/001/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.lateral_movement
+  - attack.t1021.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4624
+    LogonType: 10
+  filter_internal:
+    IpAddress|startswith:
+      - '10.'
+      - '192.168.'
+      - '172.16.'
+      - '172.17.'
+      - '172.18.'
+      - '172.19.'
+      - '172.20.'
+      - '172.21.'
+      - '172.22.'
+      - '172.23.'
+      - '172.24.'
+      - '172.25.'
+      - '172.26.'
+      - '172.27.'
+      - '172.28.'
+      - '172.29.'
+      - '172.30.'
+      - '172.31.'
+  condition: selection and not filter_internal
+falsepositives:
+  - Legitimate external RDP access
+  - VPN-connected remote users
+level: medium
+
+---
+# T1562.001 - Disable Windows Defender
+title: Windows Defender Disabled
+id: 3v6uv54r-svw7-4zx3-u5v5-t2y7u8z3x1w2
+status: stable
+description: Detects attempts to disable Windows Defender or security features
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_powershell:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains:
+      - 'Set-MpPreference -DisableRealtimeMonitoring'
+      - 'Set-MpPreference -DisableAntiSpyware'
+      - 'Add-MpPreference -ExclusionPath'
+      - 'Set-MpPreference -DisableIOAVProtection'
+      - 'Set-MpPreference -DisableBehaviorMonitoring'
+  selection_registry:
+    TargetObject|contains:
+      - 'SOFTWARE\Policies\Microsoft\Windows Defender'
+      - 'SYSTEM\CurrentControlSet\Services\WinDefend'
+    Details: 'DWORD (0x00000001)'
+  selection_service:
+    Image|endswith: '\sc.exe'
+    CommandLine|contains:
+      - 'stop WinDefend'
+      - 'delete WinDefend'
+      - 'config WinDefend start= disabled'
+  condition: selection_powershell or selection_registry or selection_service
+falsepositives:
+  - Legitimate security product deployments that conflict with Defender
+  - Authorized IT testing
+level: high
+
+---
+# T1548.002 - Bypass UAC
+title: UAC Bypass Attempt
+id: 4w7vw65s-twx8-5ay4-v6w6-u3z8v9a4y2x3
+status: stable
+description: Detects common UAC bypass techniques
+references:
+  - https://attack.mitre.org/techniques/T1548/002/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.privilege_escalation
+  - attack.defense_evasion
+  - attack.t1548.002
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_fodhelper:
+    ParentImage|endswith: '\fodhelper.exe'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+  selection_eventvwr:
+    ParentImage|endswith: '\eventvwr.exe'
+    Image|endswith:
+      - '\cmd.exe'
+      - '\powershell.exe'
+  selection_sdclt:
+    Image|endswith: '\sdclt.exe'
+    CommandLine|contains: '/kickoffelev'
+  selection_cmstp:
+    Image|endswith: '\cmstp.exe'
+    CommandLine|contains:
+      - '/s'
+      - '/ns'
+  condition: selection_fodhelper or selection_eventvwr or selection_sdclt or selection_cmstp
+falsepositives:
+  - Rare, almost no legitimate use cases for these specific patterns
+level: high
+
+---
+# T1560 - Archive Collected Data
+title: Suspicious Archiving of Collected Data
+id: 5x8wx76t-uxy9-6bz5-w7x7-v4a9w0b5z3y4
+status: stable
+description: Detects use of archiving tools to compress collected data for exfiltration
+references:
+  - https://attack.mitre.org/techniques/T1560/
+author: ThreatIQ
+date: 2025/01/01
+tags:
+  - attack.collection
+  - attack.t1560
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith:
+      - '\7z.exe'
+      - '\7za.exe'
+      - '\WinRAR.exe'
+      - '\rar.exe'
+      - '\winzip32.exe'
+    CommandLine|contains:
+      - ' a '
+      - ' -p'
+      - '-r'
+  filter_user_dirs:
+    CommandLine|contains:
+      - 'C:\Users'
+      - 'C:\Windows'
+      - 'C:\ProgramData'
+  condition: selection and filter_user_dirs
+falsepositives:
+  - Legitimate archiving of user data
+  - Backup solutions
+level: medium
